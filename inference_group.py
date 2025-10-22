@@ -37,24 +37,7 @@ def rate(step, model_size, factor, warmup):
         step = 1
     return factor * (model_size ** (-0.5) * min(step ** (-0.5), step * warmup ** (-1.5)))
 
-from discord_webhook import DiscordWebhook, DiscordEmbed
 
-def end_discord(v_num=None,  node_size = None, G = None,  G_optgap = None,  elapsed_time2 = None):
-    url = "https://discord.com/api/webhooks/1334379289889472542/wltQ21o5e9e3S5TQ7xMYLv71GLmRcXeihEWTY6tGW_cR64zZvGrP3SI9cmHaRDcxeAsW"
-    webhook = DiscordWebhook(url=url)
-
-    embed = DiscordEmbed(title="Inference End", description=f"version_", color="03b2f8")
-    embed.set_author(name="Jieun Yook")
-    embed.set_timestamp()
-    
-    embed.add_embed_field(name=f"node_size : {node_size}", value="G = "+str(int(G)), inline = False)
-
-   
-    embed.add_embed_field(name=f"optgap", value=str(round(G_optgap,4)), inline = False)
-    embed.add_embed_field(name="total test time (s)", value=str(round(elapsed_time2,4)), inline = False)
-
-    webhook.add_embed(embed)
-    response = webhook.execute()
 
 class TSPModel(pl.LightningModule):
     def __init__(self, cfg):
@@ -445,7 +428,6 @@ if __name__ == "__main__":
     tsp_model = TSPModel.load_from_checkpoint(cfg.resume_checkpoint, strict = False) #, map_location=torch.device('cuda:0'))
     #tsp_model = TSPModel.load_from_checkpoint(args.ckpt, strict = False)
     match = re.search(r'version_(\w+)', cfg.resume_checkpoint)
-    v_num = match.group(1) #version정보 추출
 
 
     tsp_model.set_cfg(cfg)
@@ -471,9 +453,5 @@ if __name__ == "__main__":
     e2 = time.time()
     #elapsed_time2 = e2 - s2
     #print("\n elapsed _time ", elapsed_time2)
-    print(f"\n ver{v_num} optgap {tsp_model.optgap} time {e2 - s2}")
+    print(f"\n optgap : {tsp_model.optgap} \t time : {e2 - s2}")
 
-    v_num=cfg.node_size
-   
-
-    end_discord(v_num, cfg.node_size, cfg.G,  tsp_model.optgap,e2 - s2)
