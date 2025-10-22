@@ -62,36 +62,6 @@ class EncoderDecoder2(nn.Module):
         return res
     
 
-    def old_decode(self, memory, src_fuzzy, tgt, tgt_mask):
-        
-        self.memory = memory
-
-        B, N, E = memory.shape
-        B, V = tgt.shape
-
-        valid_indices = (tgt != -1)
-        device = tgt.device
-        batch_indices = torch.arange(B, device = device).unsqueeze(-1).expand_as(tgt) # [B, V]
-        sequence_indices = torch.arange(V, device = device).unsqueeze(0).expand_as(tgt) # [B, V]
-
-        tgt_valid = tgt[valid_indices]
-        batch_indices_valid = batch_indices[valid_indices]
-        sequence_indices_valid = sequence_indices[valid_indices]
-
-        if self.tgt_embed is not None:
-            whole_embeddings = self.tgt_embed(src_fuzzy)
-
-            tgt_embeddings = torch.zeros(B, V, E, device = device).to(dtype = whole_embeddings.dtype)
-            tgt_embeddings[batch_indices_valid, sequence_indices_valid, :] = whole_embeddings[batch_indices_valid, tgt_valid, :]
-        else:
-            tgt_embeddings = torch.zeros(B, V, E, device = device).to(dtype = memory.dtype)
-            tgt_embeddings[batch_indices_valid, sequence_indices_valid, :] = memory[batch_indices_valid, tgt_valid, :]
-        
-        self.decoder_lut = tgt_embeddings
-        
-        tgt_embeddings, _= self.decoder_pe(tgt_embeddings)
-
-        return self.decoder(tgt_embeddings, memory, tgt_mask)
     
     
     def decode(self, memory, src_fuzzy, tgt, tgt_mask, decoding_idx):
@@ -183,13 +153,7 @@ class Encoder(nn.Module):
 
         self.norm = nn.LayerNorm(layer.size)
 
-    def old_forward(self, x, adj_mat):
-        "Pass the input through each layer in turn."
-        #modified for aafm
-        for layer in self.layers:
-            x = layer(x, adj_mat)
-        
-        return self.norm(x)
+
     
     def forward(self, x):
         "Pass the input through each layer in turn."
@@ -198,12 +162,7 @@ class Encoder(nn.Module):
         
         return self.norm(x)
     
-    def old2_forward(self, x):
-        "Pass the input through each layer in turn."
-        for layer in self.layers:
-            x = layer(x)
-        self.enc_attention_map = self.layers[-1].enc_attention_map
-        return self.norm(x)
+
 
 class SublayerConnection(nn.Module):
     """
@@ -230,11 +189,7 @@ class EncoderLayer(nn.Module):
         self.sublayer = clones(SublayerConnection(size, dropout), 2)
         self.size = size
 
-    def old_forward(self, x, dist_matrix):
-        "Follow Figure 1 (left) for connections."
-        
-        x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, dist_matrix))
-        return self.sublayer[1](x, self.feed_forward)
+  
 
     def forward(self, x):
         "Follow Figure 1 (left) for connections."
@@ -264,11 +219,7 @@ class Decoder(nn.Module):
         return self.norm(x)
     
     
-    def old2_forward(self, x, memory, tgt_mask):
-        for layer in self.layers:
-            x = layer(x, memory, tgt_mask, self.attn_input)
-        return self.norm(x)
-
+ 
     
 
 class DecoderLayer(nn.Module):
@@ -287,13 +238,7 @@ class DecoderLayer(nn.Module):
         
 
 
-    def old_forward(self, x, memory, tgt_mask):
-        "only self attn on Decoder"
-        m = memory
-
-        #modified for remove decoder selfattn
-        x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, tgt_mask))
-        return self.sublayer[1](x, self.feed_forward)
+   
     
 
     def forward(self, x, memory, tgt_mask):
@@ -399,27 +344,8 @@ class Embeddings2(nn.Module):
         return self.w(x).relu()
     
 
-    def old_forward(self, x):
-        # x: [B, node_size, 2]
-        # visited: (only for decoder) [B, node_size]
+   
 
-        device = x.device 
-        x = x.to(device, dtype=torch.float32)
-        B, V, E = x.shape
-
-        emb1 = torch.zeros(B, V, E, device = device).to(dtype = x.dtype)
-        emb2 = torch.zeros(B, V, E, device = device).to(dtype = x.dtype)
-        
-
-        emb1 = x[:,:,:48] #fuzzy encoding
-        emb2 = x[:,:,48:] #feat3 encoding
-
-        result1 = self.w(emb1).relu()
-        result2 = self.w2(emb2).relu()
-        result = result1 + result2
-
-        return result
-    
       
  
 class PositionalEncoding_2D(nn.Module):
@@ -546,41 +472,9 @@ class PositionalEncoding_Circular(nn.Module):
     
         return  pe, CPE_embedding
 
-    #modified
-    """
-    def forward(self, x):
-        x = x + self.pe[:, : x.size(1)].requires_grad_(False)
-        return self.dropout(x), self.pe[:, : x.size(1)]
-    """
+  
     
-class old_PositionalEncoding_Circular(nn.Module):
-    "Implement the PE function."
 
-    def __init__(self, d_model, dropout, max_len=10000):
-        super(old_PositionalEncoding_Circular, self).__init__()
-        
-        self.dropout = nn.Dropout(p=dropout)
-
-        # Compute the positional encodings once in log space.
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * -(math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term + 2 * torch.pi * position / max_len)
-        pe[:, 1::2] = torch.cos(position * div_term + 2 * torch.pi * position / max_len)
-        pe = pe.unsqueeze(0)
-        self.register_buffer("pe", pe)
-
-
-    #modified
-    def forward(self, x):
-        x = x + self.pe[:, : x.size(1)].requires_grad_(False)
-        #modified for trainable
-        #x = x + self.pe[:, : x.size(1)]
-        return self.dropout(x), self.pe[:, : x.size(1)]
-    
-    def original_forward(self, x):
-        x = x + self.pe[:, : x.size(1)].requires_grad_(False)
-        return self.dropout(x)
     
 class PositionalEncoding_1D(nn.Module):
     "Implement the PE function."
@@ -638,7 +532,6 @@ def make_model(
     
     
     if (decoder_pe == "circular") | (decoder_pe == "circular PE"): 
-        #decoder_pe = old_PositionalEncoding_Circular(d_model, dropout, src_sz)
         decoder_pe = PositionalEncoding_Circular(d_model, dropout, src_sz)
     elif decoder_pe == "1D":
         decoder_pe = PositionalEncoding_1D(d_model, dropout)
