@@ -1,0 +1,40 @@
+train_data_path: tsp100_train_concorde_depth_7
+val_data_path: tsp100_test_concorde.txt 
+node_size: 100
+train_batch_size: 1280 #40 #1280 # [tsp50, tsp100, tsp500, tsp1000]: 80 tsp1000_Depth8 : 40 - 478G까지 올라감. tsp1000_Depth7 : 40 - 412G까지 올라감. tsp500_Depth8 : 80 - 326G까지 올라감.
+val_batch_size: 1280 #60 #1280 #1280  #16 # [tsp50,tsp100]: 1280, [tsp500, tsp1000]: 128 tsp1000_Depth8 : 60
+test_batch_size: 1280 #128 #28 #60 #1280 #1280
+G: 1 #00 #20 #500 #20 #100 
+resume_training : False
+resume_checkpoint: logs/lightning_logs/version_108/checkpoints/TSP100-epoch=145-opt_gap=0.6646.ckpt
+#logs/lightning_logs/version_112/checkpoints/TSP100-epoch=141-opt_gap=0.6826.ckpt
+#logs/lightning_logs/version_100/checkpoints/TSP1000-epoch=528-opt_gap=4.3479.ckpt
+#logs/lightning_logs/version_108/checkpoints/TSP100-epoch=145-opt_gap=0.6646.ckpt
+#logs/lightning_logs/version_101/checkpoints/TSP500-epoch=499-opt_gap=4.4393.ckpt
+#logs/lightning_logs/version_107/checkpoints/TSP1000-epoch=465-opt_gap=4.8329.ckpt
+#logs/lightning_logs/version_110/checkpoints/TSP50-epoch=138-opt_gap=0.1752.ckpt
+gpus: [1] #,1] #,1]  
+max_epochs: 150 #tsp100=100/tsp1000=400/tsp500 = 340
+enc_num_layers: 6 #6 #6 #12
+dec_num_layers: 6 
+d_model: 256 #128 #256
+d_ff: 1024 #512 #1024 #512
+h: 8
+dropout: 0.1
+smoothing: 0.1
+seed: 1
+lr: 0.5
+betas: [0.9, 0.98]
+eps: 1e-9
+factor: 1.0 
+warmup: 400
+encoder_pe: 2D #None #, 2D
+decoder_pe: circular #None #, 1D, circular 
+decoder_lut: memory # shared, unshared, memory
+comparison_matrix: memory # encoder_lut, decoder_lut, memory
+use_start_token : False
+mst_loss_weight : 0.1
+feat_dim : 128 #feat_dim=fuzzy_depth*8 +80
+grad_clip : False
+fuzzy_depth : 6
+#self.clip_gradients(opt, gradient_clip_val=0.25, gradient_clip_algorithm='value')60

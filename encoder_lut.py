@@ -1,0 +1,378 @@
+import torch
+import torch.nn.functional as F
+import math
+from tqdm import tqdm
+from fuzzy_feature2 import get_fuzzy_features3_optimized
+#from sklearn.metrics.pairwise import cosine_similarity
+
+fuzzy8_degree_bins = torch.linspace(22.5,382.5,9)
+fuzzy8_degree_bins[-1] = 360
+appendix_bin=torch.tensor([0, 22.5])
+fuzzy_degree_bins=torch.concat([fuzzy8_degree_bins, appendix_bin], dim=-1)
+
+#degree_bins = torch.linspace(0,360,9)
+degree_bins = torch.linspace(0,360,13)
+#cos_bins = [-1.0000e+00, -8.3333e-01, -6.6667e-01, -5.0000e-01, -3.3333e-01,\
+#        -1.6667e-01, -2.9802e-08,  1.6667e-01,  3.3333e-01,  5.0000e-01,\
+#         6.6667e-01,  8.3333e-01,  1.0000e+00] # cos_bins = torch.linspace(-1, 1, 13)
+
+
+#triangle_val = torch.tensor([[ 1.7321e-01,  1.0000e-01,  1.2246e-17, -1.0000e-01, -1.7321e-01,
+#         -2.0000e-01, -1.7321e-01, -1.0000e-01, -3.6739e-17,  1.0000e-01,
+#          1.7321e-01,  2.0000e-01],
+#        [ 1.0000e-01,  1.7321e-01,  2.0000e-01,  1.7321e-01,  1.0000e-01,
+#          2.4493e-17, -1.0000e-01, -1.7321e-01, -2.0000e-01, -1.7321e-01,
+#         -1.0000e-01, -4.8986e-17]]) #diff=4/node_size
+
+
+def make_rads(node_size):
+  angle_list = [30,60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360]
+  cos_list=[]
+  sin_list=[]
+  diff = 4/node_size  #반경 4/node_size으로 설정
+  #diff = 8/node_size  #반경 4/node_size으로 설정
+  #diff = 16/node_size
+  
+  for i in range(len(angle_list)):
+    rad = math.radians(angle_list[i])
+    cos_list.append(diff * math.cos(rad))
+    sin_list.append(diff * math.sin(rad))
+  cos_value = torch.tensor(cos_list)
+  sin_value = torch.tensor(sin_list)
+
+  triangle_value = torch.stack([cos_value, sin_value], dim=1)
+  tri=triangle_value.transpose(1,0)
+  # tri = [2, 12] 
+  # first row = r * cos_theta(rad)
+  # second row = r * sin_theta(rad)
+
+
+  del triangle_value, cos_value, sin_value, cos_list, sin_list
+
+  return tri
+
+def get_large(a,b):
+  if a >= b :
+    large = a
+    small = b
+  else :
+    large = b
+    small = a 
+
+  return large,small
+
+def count_nodes(base1, base2, graph, diff): # given node와 knot 1개가 주어졌을 때 해당하는 정점의 수
+  p1_x = base1[0]
+  p3_x = base1[0]
+  p2_x = base2[0]
+  p4_x = base2[0]
+  
+  p1_y = base1[1]+ diff
+  p3_y = base1[1]- diff
+  p2_y = base2[1]+ diff
+  p4_y = base2[1]- diff
+
+
+  #print(p1_x, p1_y, p2_x, p2_y, p3_x, p3_y, p4_x, p4_y)
+  large_x, small_x = get_large(p1_x, p2_x)
+
+  
+  large_y = max(p1_y, p2_y, p3_y, p4_y)
+  small_y = min(p1_y, p2_y, p3_y, p4_y)
+
+  #coordinate x
+  table_x_con1 = graph[:,0] <= large_x
+  table_x_con2 = graph[:,0] >= small_x
+  table_x = table_x_con1 * table_x_con2 
+  
+  #coordinate y
+  table_y_con1 = graph[:,1] <= large_y
+  table_y_con2 = graph[:,1] >= small_y
+  table_y = table_y_con1 * table_y_con2 
+
+  table=table_x *  table_y
+  #heatmap.sum(dim = -1)
+
+  
+  return table.sum(dim=-1)
+
+def make_knots(given_nodes, tri_value, num_of_directions = 12):
+  d1, d2 = given_nodes.size() 
+
+  #그래프 복사
+  knots = torch.zeros([d1, d2] ,dtype=given_nodes.dtype)
+  knots[:,:]=given_nodes[:,:] 
+  knots = knots.unsqueeze(-1).repeat(1,1,12)
+
+  #x1 + cos theta, x2 + sin theta
+  knots = knots[:,:,:] + tri_value
+
+  return knots
+
+def get_count_matrix(dist_matrix, dist_max, dist_min=None):
+    if dist_min!=None:
+      
+      heatmap1 = dist_matrix >= dist_min
+      heatmap2 = dist_matrix < dist_max
+      heatmap = heatmap1 * heatmap2
+    
+    else:
+      heatmap = dist_matrix <=dist_max
+      
+    count_matrix = heatmap.sum(dim = -1)
+    
+    return count_matrix
+
+def get_one_hot_encoding(count_nodes, num_categories):
+    # 0 ~ num_categories-1 의 category에 할당됨.
+    bins = torch.linspace(-1, count_nodes.max() + 1, num_categories + 1)
+    category_indices = torch.bucketize(count_nodes, bins, right=False) - 1
+    one_hot_categories = torch.nn.functional.one_hot(category_indices, num_categories)
+    #print(one_hot_categories)
+    return one_hot_categories
+
+def get_embedding2(dist_matrix, node_size, bucket_size, rad1, rad2):
+    
+   
+    range1 = rad1/node_size
+    range2 = rad2/node_size
+
+
+    count_matrix1 = get_count_matrix(dist_matrix,  range1) # range1 구간의 개수 counting, [N]
+    count_matrix2 = get_count_matrix(dist_matrix,  range2) # range2 구간의 개수 counting, [N]
+
+    #print("count_matrix1 ", count_matrix1)
+    #print("count_matrix2 ", count_matrix2)
+    
+    one_hot1 = get_one_hot_encoding(count_matrix1-1,  bucket_size)
+    one_hot2 = get_one_hot_encoding(count_matrix2-1,  bucket_size)
+    
+    embedding2 = torch.concat([one_hot1, one_hot2], dim = -1)
+    return embedding2
+
+
+def get_embedding4(points, dist_matrix, node_size, bucket_size, rad2):
+
+    x_i, y_i = points[:, 0].view(node_size, 1), points[:, 1].view(node_size, 1)
+    x_j, y_j = points[:, 0].view(1, node_size), points[:, 1].view(1, node_size)
+    
+    range3 = rad2/node_size
+    
+    # 거리 조건 필터링
+    mask = dist_matrix <= range3
+    valid_mask = torch.empty(mask.size())
+    valid_mask[mask == True] = 1
+    valid_mask[mask==False] = -math.inf
+
+    
+    # 각도 계산 (-180 ~ 180 범위) 및 0~360 변환
+    angles = torch.atan2(y_j - y_i, x_j - x_i) * (180 / torch.pi)
+    angles[angles < 0] += 360
+
+    angles = angles * valid_mask
+
+    # 자기자신 제외
+    angles.fill_diagonal_(-math.inf)
+
+    #print("after angles", angles)
+
+
+    count_matrix2 = get_count_matrix(angles,  degree_bins[1], degree_bins[0])
+    count_matrix3 = get_count_matrix(angles,  degree_bins[2], degree_bins[1])
+    count_matrix4 = get_count_matrix(angles,  degree_bins[3], degree_bins[2])
+    count_matrix5 = get_count_matrix(angles,  degree_bins[4], degree_bins[3])
+    count_matrix6 = get_count_matrix(angles,  degree_bins[5], degree_bins[4])
+    count_matrix7 = get_count_matrix(angles,  degree_bins[6], degree_bins[5])
+    count_matrix8 = get_count_matrix(angles,  degree_bins[7], degree_bins[6])
+    count_matrix9 = get_count_matrix(angles,  degree_bins[8], degree_bins[7])
+    count_matrix10 = get_count_matrix(angles,  degree_bins[9], degree_bins[8])
+    count_matrix11 = get_count_matrix(angles,  degree_bins[10], degree_bins[9])
+    count_matrix12 = get_count_matrix(angles,  degree_bins[11], degree_bins[10])
+    count_matrix13 = get_count_matrix(angles,  degree_bins[12], degree_bins[11])
+
+    one_hot2 = get_one_hot_encoding(count_matrix2,  bucket_size)
+    one_hot3 = get_one_hot_encoding(count_matrix3,  bucket_size)
+    one_hot4 = get_one_hot_encoding(count_matrix4,  bucket_size)
+    one_hot5 = get_one_hot_encoding(count_matrix5,  bucket_size)
+    one_hot6 = get_one_hot_encoding(count_matrix6,  bucket_size)
+    one_hot7 = get_one_hot_encoding(count_matrix7,  bucket_size)
+
+    one_hot8 = get_one_hot_encoding(count_matrix8,  bucket_size)
+    one_hot9 = get_one_hot_encoding(count_matrix9,  bucket_size)
+    one_hot10 = get_one_hot_encoding(count_matrix10,  bucket_size)
+    one_hot11 = get_one_hot_encoding(count_matrix11,  bucket_size)
+    one_hot12 = get_one_hot_encoding(count_matrix12,  bucket_size)
+    one_hot13 = get_one_hot_encoding(count_matrix13,  bucket_size)
+
+    embedding3 = torch.concat([one_hot2, one_hot3, one_hot4, one_hot5, one_hot6,\
+     one_hot7, one_hot8, one_hot9 , one_hot10, one_hot11, one_hot12, one_hot13], dim = -1)#], dim = -1)#
+
+    return embedding3
+
+def get_fuzzy_embedding4(points, dist_matrix, node_size, bucket_size, rad2):
+
+    x_i, y_i = points[:, 0].view(node_size, 1), points[:, 1].view(node_size, 1)
+    x_j, y_j = points[:, 0].view(1, node_size), points[:, 1].view(1, node_size)
+
+    range3 = rad2/node_size
+
+    # 거리 조건 필터링
+    mask = dist_matrix <= range3
+    valid_mask = torch.empty(mask.size())
+    valid_mask[mask == True] = 1
+    valid_mask[mask==False] = -math.inf
+
+
+    # 각도 계산 (-180 ~ 180 범위) 및 0~360 변환
+    angles = torch.atan2(y_j - y_i, x_j - x_i) * (180 / torch.pi)
+    angles[angles < 0] += 360
+
+    angles = angles * valid_mask
+
+    # 자기자신 제외
+    angles.fill_diagonal_(-math.inf)
+
+
+    #same as get_embedding4
+    count_matrix2 = get_count_matrix(angles,  degree_bins[1], degree_bins[0])
+    count_matrix3 = get_count_matrix(angles,  degree_bins[2], degree_bins[1])
+    count_matrix4 = get_count_matrix(angles,  degree_bins[3], degree_bins[2])
+    count_matrix5 = get_count_matrix(angles,  degree_bins[4], degree_bins[3])
+    count_matrix6 = get_count_matrix(angles,  degree_bins[5], degree_bins[4])
+    count_matrix7 = get_count_matrix(angles,  degree_bins[6], degree_bins[5])
+    count_matrix8 = get_count_matrix(angles,  degree_bins[7], degree_bins[6])
+    count_matrix9 = get_count_matrix(angles,  degree_bins[8], degree_bins[7])
+
+
+    one_hot2 = get_one_hot_encoding(count_matrix2,  bucket_size)
+    one_hot3 = get_one_hot_encoding(count_matrix3,  bucket_size)
+    one_hot4 = get_one_hot_encoding(count_matrix4,  bucket_size)
+    one_hot5 = get_one_hot_encoding(count_matrix5,  bucket_size)
+    one_hot6 = get_one_hot_encoding(count_matrix6,  bucket_size)
+    one_hot7 = get_one_hot_encoding(count_matrix7,  bucket_size)
+    one_hot8 = get_one_hot_encoding(count_matrix8,  bucket_size)
+    one_hot9 = get_one_hot_encoding(count_matrix9,  bucket_size)
+
+    #get fuzzy_embedding4
+    fuzzy_count_matrix2 = get_count_matrix(angles,  fuzzy_degree_bins[1], fuzzy_degree_bins[0])
+    fuzzy_count_matrix3 = get_count_matrix(angles,  fuzzy_degree_bins[2], fuzzy_degree_bins[1])
+    fuzzy_count_matrix4 = get_count_matrix(angles,  fuzzy_degree_bins[3], fuzzy_degree_bins[2])
+    fuzzy_count_matrix5 = get_count_matrix(angles,  fuzzy_degree_bins[4], fuzzy_degree_bins[3])
+    fuzzy_count_matrix6 = get_count_matrix(angles,  fuzzy_degree_bins[5], fuzzy_degree_bins[4])
+    fuzzy_count_matrix7 = get_count_matrix(angles,  fuzzy_degree_bins[6], fuzzy_degree_bins[5])
+    fuzzy_count_matrix8 = get_count_matrix(angles,  fuzzy_degree_bins[7], fuzzy_degree_bins[6])
+
+    fuzzy_count_matrix_right_half = get_count_matrix(angles,  fuzzy_degree_bins[8], fuzzy_degree_bins[7])
+    fuzzy_count_matrix_left_half = get_count_matrix(angles,  fuzzy_degree_bins[-1], fuzzy_degree_bins[-2]) # fuzzy_degree_bins[-2]=degree 0 / fuzzy_degree_bins[-1] = starting degree
+
+    fuzzy_count_matrix9 = fuzzy_count_matrix_left_half + fuzzy_count_matrix_right_half
+   
+
+    fuzzy_one_hot2 = get_one_hot_encoding(fuzzy_count_matrix2,  bucket_size)
+    fuzzy_one_hot3 = get_one_hot_encoding(fuzzy_count_matrix3,  bucket_size)
+    fuzzy_one_hot4 = get_one_hot_encoding(fuzzy_count_matrix4,  bucket_size)
+    fuzzy_one_hot5 = get_one_hot_encoding(fuzzy_count_matrix5,  bucket_size)
+    fuzzy_one_hot6 = get_one_hot_encoding(fuzzy_count_matrix6,  bucket_size)
+    fuzzy_one_hot7 = get_one_hot_encoding(fuzzy_count_matrix7,  bucket_size)
+    fuzzy_one_hot8 = get_one_hot_encoding(fuzzy_count_matrix8,  bucket_size)
+    fuzzy_one_hot9 = get_one_hot_encoding(fuzzy_count_matrix9,  bucket_size)
+
+
+
+    embedding3 = torch.concat([one_hot2, one_hot3, one_hot4, one_hot5, one_hot6,\
+     one_hot7, one_hot8, one_hot9, fuzzy_one_hot2, fuzzy_one_hot3, fuzzy_one_hot4, fuzzy_one_hot5, fuzzy_one_hot6,\
+     fuzzy_one_hot7, fuzzy_one_hot8, fuzzy_one_hot9 ], dim = -1)
+
+    return embedding3
+
+
+def get_angle_matrix(node_positions):
+    delta_xs = node_positions[:, 0].unsqueeze(dim=1) - node_positions[:, 0].unsqueeze(dim=-1)
+    delta_ys = node_positions[:, 1].unsqueeze(dim=1) - node_positions[:, 1].unsqueeze(dim=-1)
+    angle_matrix = torch.atan2(delta_ys, delta_xs)
+    return angle_matrix
+
+
+
+def get_encoder_embedding(tsp_instance, node_size, depth=6,  bucket_size=4):
+    
+    dist_matrix = torch.cdist(tsp_instance, tsp_instance)
+
+    embedding1 = get_fuzzy_features3_optimized(tsp_instance, depth)
+
+    #op4
+    #tsp ckpt ==1000
+    #rad1 = 31
+    #rad2 = 73
+
+    #tsp ckpt ==500
+    #rad1 = 22
+    #rad2 = 52
+
+    #tsp ckpt ==100
+    #rad1 = 10
+    #rad2 = 25
+
+    #tsp ckpt ==50
+    #rad1 = 7
+    #rad2 = 19
+
+    """op3
+    if node_size < 100 :
+       rad1 = 7
+       rad2 = 19
+    elif (node_size >= 100) & (node_size < 500):
+       rad1 = 10
+       rad2 = 25
+    elif (node_size >= 500) & (node_size < 1000):
+       rad1 = 22
+       rad2 = 52
+    elif (node_size >= 1000) & (node_size <= 2000):
+       rad1 = 31
+       rad2 = 73
+
+    #op2
+    if node_size <= 50 :
+       rad1 = 7
+       rad2 = 19
+    elif (node_size > 50) & (node_size <= 380):
+       rad1 = 10
+       rad2 = 25
+    elif (node_size > 380) & (node_size <= 850):
+       rad1 = 22
+       rad2 = 52
+    elif (node_size > 850) & (node_size <= 1500):
+       rad1 = 31
+       rad2 = 73
+   """
+      
+    #op1
+    if node_size <= 75 :
+       rad1 = 7
+       rad2 = 19
+    elif (node_size > 75) & (node_size <= 250):
+       rad1 = 10
+       rad2 = 25
+    elif (node_size > 250) & (node_size <= 750):
+       rad1 = 22
+       rad2 = 52
+    elif (node_size > 750) & (node_size <= 2000):
+       rad1 = 31
+       rad2 = 73
+    #"""
+    
+
+
+    embedding2 = get_embedding2(dist_matrix, node_size, bucket_size, rad1, rad2)
+    embedding3 = get_embedding4(tsp_instance, dist_matrix, node_size, bucket_size, rad2)
+
+    embedding = torch.concat([embedding1, embedding2,  embedding3], dim = -1)
+    return embedding
+    
+
+    #return embedding1
+
+  
+    
+    
+
