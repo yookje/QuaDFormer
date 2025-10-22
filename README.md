@@ -15,3 +15,10 @@ This study proposes QuaDFormer, a Transformer-based solver for the Traveling Sal
 ## Datasets
 
 [Dataset Download Link](https://www.dropbox.com/scl/fo/tw6rjngvn6sxo1k75ddej/ALJNMyz8S5OVXyXEhftbom4?rlkey=zye153wnvgx2ivm7pwea6qbol&st=uzby1k8a&dl=0)
+
+
+## Build and Run Docker Container
+'''
+docker build -t quadformer-image .
+docker run —ipc host —gpus all -it —rm —name quadformer_container quadformer_image
+'''
