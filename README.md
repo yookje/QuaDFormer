@@ -18,6 +18,7 @@ This study proposes QuaDFormer, a Transformer-based solver for the Traveling Sal
 
 
 ## Build and Run Docker Container
-```docker build -t quadformer-image . \
+```
+docker build -t quadformer-image . 
 docker run —ipc host —gpus all -it —rm —name quadformer_container quadformer_image
 ```
