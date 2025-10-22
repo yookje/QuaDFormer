@@ -16,13 +16,6 @@ from pytorch_lightning.strategies import DDPStrategy
 
 from torch.utils.data import DataLoader, Dataset
 
-#modified for pickle
-#from dataset_pickle_large_new import TSPDataset, collate_fn, make_tgt_mask #for tsp-100 depth 7
-#from dataset_pickle_large import TSPDataset, collate_fn, make_tgt_mask
-#from dataset_pickle import TSPDataset, collate_fn, make_tgt_mask
-#from dataset_inference_pickle import TSPDataset as TSPDataset_Val
-#from dataset_inference_pickle import collate_fn as collate_fn_val
-
 
 from dataset import TSPDataset, collate_fn, make_tgt_mask
 from dataset_inference import TSPDataset as TSPDataset_Val
@@ -584,41 +577,6 @@ def parse_arguments():
     return args
 
 
-# Discord 함수들은 동일...
-from discord_webhook import DiscordWebhook, DiscordEmbed
-
-def start_discord(cfg, v_num):
-    url = "https://discord.com/api/webhooks/1334379289889472542/wltQ21o5e9e3S5TQ7xMYLv71GLmRcXeihEWTY6tGW_cR64zZvGrP3SI9cmHaRDcxeAsW"
-    webhook = DiscordWebhook(url=url)
-    embed = DiscordEmbed(title="Train start", description=f"version_{v_num}", color="03b2f8")
-    embed.set_author(name="Jieun Yook")
-    embed.set_timestamp()
-    
-    for k, v in cfg.items():
-        if k in ["resume_checkpoint", "gpus", "max_epochs"]:
-            continue
-        embed.add_embed_field(name=str(k), value=str(v))
-    
-    webhook.add_embed(embed)
-    response = webhook.execute()
-
-
-def end_discord(v_num, metrics=None, G = None, G_optgap = None, elapsed_time=None, elapsed_time2 = None):
-    url = "https://discord.com/api/webhooks/1334379289889472542/wltQ21o5e9e3S5TQ7xMYLv71GLmRcXeihEWTY6tGW_cR64zZvGrP3SI9cmHaRDcxeAsW"
-    webhook = DiscordWebhook(url=url)
-    embed = DiscordEmbed(title="Train End", description=f"version_{v_num}", color="03b2f8")
-    embed.set_author(name="Jieun Yook")
-    embed.set_timestamp()
-    
-    for idx, (optgap, filename) in enumerate(metrics):
-        embed.add_embed_field(name=f"top{idx + 1} opt gap (%)", value=filename, inline = False)
-    
-    embed.add_embed_field(name=f"{G}_sampled_optgap", value=str(G_optgap), inline = False)
-    embed.add_embed_field(name="total train time (s)", value=str(elapsed_time), inline = False)
-    embed.add_embed_field(name="total test time (s)", value=str(elapsed_time2), inline = False)
-    
-    webhook.add_embed(embed)
-    response = webhook.execute()
 
 
 if __name__ == "__main__":
@@ -680,9 +638,7 @@ if __name__ == "__main__":
     
     if trainer.is_global_zero:
         items = trainer.progress_bar_callback.get_metrics(trainer, tsp_model)
-        v_num = items.pop("v_num", None)
-        start_discord(cfg, v_num)
-
+  
     # 학습
     try:
         s = time.time()
@@ -707,11 +663,9 @@ if __name__ == "__main__":
                 metrics.append([float(str(file).split("=")[-1].split(".ckpt")[0]), file])
             metrics.sort()
             
-            end_discord(v_num, metrics, tsp_model.G, tsp_model.optgap, elapsed_time, elapsed_time2)
+         
             
     except Exception as e:
         print(f"Training failed with error: {str(e)}")
         traceback.print_exc()
-        if trainer.is_global_zero:
-            # 에러 발생 시에도 Discord 알림
-            end_discord(v_num, [], None, None, None, None)
+       
