@@ -10,8 +10,8 @@ This study proposes QuaDFormer, a Transformer-based solver for the Traveling Sal
 
 ## Pretrained Checkpoints
 
-다운로드 링크 제공
+[Checkpoint Link](https://www.dropbox.com/scl/fo/8ssh12qu387hnxje3h7u2/AK4kBBipA-pA_RMVhTBUKwY?rlkey=cboi5htfmac9nyb76n8wjkd6v&st=muw7tnhs&dl=0)
 
 ## Datasets
 
-[Dataset Download Link](https://www.dropbox.com/scl/fo/tw6rjngvn6sxo1k75ddej/ALJNMyz8S5OVXyXEhftbom4?rlkey=7sn8wcsll3cl1oane9cqqzqmc&st=4ntd149x&dl=0)
+[Dataset Download Link](https://www.dropbox.com/scl/fo/tw6rjngvn6sxo1k75ddej/ALJNMyz8S5OVXyXEhftbom4?rlkey=zye153wnvgx2ivm7pwea6qbol&st=uzby1k8a&dl=0)
