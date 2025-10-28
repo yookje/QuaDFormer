@@ -34,12 +34,6 @@ python inference_group.py
 
 Before running, please modify the following fields in the `config.yaml` file:
 
-- `fuzzy_depth`  
-- `feat_dim`  
-- `val_data_path`  
-- `G`  
-- `resume_checkpoint`
-
 - Set **`G`** to **1** for *greedy decoding* and **20** for *multi-start decoding*.  
 - Specify the **test dataset path** in `val_data_path`.  
 - Specify the **checkpoint file path** in `resume_checkpoint`.
