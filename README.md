@@ -24,3 +24,18 @@ This study proposes QuaDFormer, a Transformer-based solver for the Traveling Sal
 docker build -t quadformer-image . 
 docker run —ipc host —gpus all -it —rm —name quadformer_container quadformer_image
 ```
+
+
+## Inference Command
+
+```
+python inference_group.py
+```
+
+Before running, please modify the following fields in the `config.yaml` file:
+
+- `fuzzy_depth`  
+- `feat_dim`  
+- `val_data_path`  
+- `G`  
+- `resume_checkpoint`
