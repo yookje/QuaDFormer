@@ -39,3 +39,13 @@ Before running, please modify the following fields in the `config.yaml` file:
 - `val_data_path`  
 - `G`  
 - `resume_checkpoint`
+
+- Set **`G`** to **1** for *greedy decoding* and **20** for *multi-start decoding*.  
+- Specify the **test dataset path** in `val_data_path`.  
+- Specify the **checkpoint file path** in `resume_checkpoint`.
+
+| **Parameter**    | **TSP-50** | **TSP-100** | **TSP-500** | **TSP-1000** |
+|:-----------------|:----------:|:-----------:|:------------:|:-------------:|
+| `fuzzy_depth`    | 5          | 6           | 8            | 9             |
+| `feat_dim`       | 120        | 128         | 144          | 152           |
+
