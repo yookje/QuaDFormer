@@ -3,12 +3,6 @@ import torch.nn.functional as F
 import math
 from tqdm import tqdm
 from fuzzy_feature2 import get_fuzzy_features3_optimized
-#from sklearn.metrics.pairwise import cosine_similarity
-
-fuzzy8_degree_bins = torch.linspace(22.5,382.5,9)
-fuzzy8_degree_bins[-1] = 360
-appendix_bin=torch.tensor([0, 22.5])
-fuzzy_degree_bins=torch.concat([fuzzy8_degree_bins, appendix_bin], dim=-1)
 
 
 degree_bins = torch.linspace(0,360,13)
