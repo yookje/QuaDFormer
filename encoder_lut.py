@@ -10,11 +10,8 @@ fuzzy8_degree_bins[-1] = 360
 appendix_bin=torch.tensor([0, 22.5])
 fuzzy_degree_bins=torch.concat([fuzzy8_degree_bins, appendix_bin], dim=-1)
 
-#degree_bins = torch.linspace(0,360,9)
+
 degree_bins = torch.linspace(0,360,13)
-#cos_bins = [-1.0000e+00, -8.3333e-01, -6.6667e-01, -5.0000e-01, -3.3333e-01,\
-#        -1.6667e-01, -2.9802e-08,  1.6667e-01,  3.3333e-01,  5.0000e-01,\
-#         6.6667e-01,  8.3333e-01,  1.0000e+00] # cos_bins = torch.linspace(-1, 1, 13)
 
 
 
