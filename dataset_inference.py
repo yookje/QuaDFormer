@@ -79,7 +79,7 @@ class TSPDataset(Dataset):
         """
         with open(self.data_path, "r") as fp:
             tsp_set = fp.readlines()
-            for tsp in tsp_set[:100]: #[:100]
+            for tsp in tsp_set: #[:100]
                 tsp = tsp.split("output")
                 tsp_instance = tsp[0].split()
 
