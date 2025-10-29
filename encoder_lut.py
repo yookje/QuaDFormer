@@ -300,51 +300,6 @@ def get_encoder_embedding(tsp_instance, node_size, depth=6,  bucket_size=4):
 
     embedding1 = get_fuzzy_features3_optimized(tsp_instance, depth)
 
-    #op4
-    #tsp ckpt ==1000
-    #rad1 = 31
-    #rad2 = 73
-
-    #tsp ckpt ==500
-    #rad1 = 22
-    #rad2 = 52
-
-    #tsp ckpt ==100
-    #rad1 = 10
-    #rad2 = 25
-
-    #tsp ckpt ==50
-    #rad1 = 7
-    #rad2 = 19
-
-    """op3
-    if node_size < 100 :
-       rad1 = 7
-       rad2 = 19
-    elif (node_size >= 100) & (node_size < 500):
-       rad1 = 10
-       rad2 = 25
-    elif (node_size >= 500) & (node_size < 1000):
-       rad1 = 22
-       rad2 = 52
-    elif (node_size >= 1000) & (node_size <= 2000):
-       rad1 = 31
-       rad2 = 73
-
-    #op2
-    if node_size <= 50 :
-       rad1 = 7
-       rad2 = 19
-    elif (node_size > 50) & (node_size <= 380):
-       rad1 = 10
-       rad2 = 25
-    elif (node_size > 380) & (node_size <= 850):
-       rad1 = 22
-       rad2 = 52
-    elif (node_size > 850) & (node_size <= 1500):
-       rad1 = 31
-       rad2 = 73
-   """
       
     #op1
     if node_size <= 75 :
