@@ -286,105 +286,167 @@ class TSPModel(pl.LightningModule):
         )
         return test_dataloader
     
-    def points2adj(self, points):
-            """
-            return distance matrix
-            Args:
-            points: b, n, 2
-            Returns: b, n, n
-            """
-            assert points.dim() == 3
-            return torch.sum((points.unsqueeze(2) - points.unsqueeze(1)) ** 2, dim=-1) ** 0.5
-      
-
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch, batch_idx): #3beam_speedup
         src = batch["src"]
         tgt = batch["tgt"]
         visited_mask = batch["visited_mask"]
         ntokens = batch["ntokens"]
         tgt_mask = batch["tgt_mask"]
         tsp_tours = batch["tsp_tours"]
-        
-        #for fuzzy
         src_fuzzy = batch["src_fuzzy"]
 
-        
         batch_size = tsp_tours.shape[0]
         node_size = tsp_tours.shape[1]
-        src_original = src.clone()
+       
         fuzzy_emb_size = src_fuzzy.shape[-1]
 
         G = self.cfg.G
+        K = 4 # top-K candidates
+        #print(f"\n candidate : {K}")
         
-        # Train 코드와 동일한 방식으로 G개씩 나누어 처리
-        optimal_tour_distance = self.get_tour_distance(src_original, tsp_tours)
+        # src 직접 사용
+        optimal_tour_distance = self.get_tour_distance(src, tsp_tours)
         best_predicted_distances = torch.full((batch_size,), float('inf'), device=src.device)
         best_tours = torch.zeros_like(tsp_tours)
+
+        g_batch_size = min(4, G)
         
-        # G개를 한번에 처리하지 않고 배치로 나누어 처리
-        g_batch_size = min(16, G)  # 한 번에 처리할 G 샘플 수
+        # 마스크 캐시 초기화
+        if not hasattr(self, '_mask_cache'):
+            self._mask_cache = {}
         
         for g_start in range(0, G, g_batch_size):
             g_end = min(g_start + g_batch_size, G)
             current_g = g_end - g_start
             
             with torch.no_grad():
-                # 현재 배치만큼만 복제
-                src_g = src.unsqueeze(1).repeat(1, current_g, 1, 1).reshape(batch_size * current_g, node_size, 2)
-                src_fuzzy_g = src_fuzzy.unsqueeze(1).repeat(1, current_g, 1, 1).reshape(batch_size * current_g, node_size, fuzzy_emb_size)
-                tgt_g = torch.arange(g_start, g_end).to(src.device).unsqueeze(0).repeat(batch_size, 1).reshape(batch_size * current_g, 1)
+                with torch.cuda.amp.autocast(enabled=True):
+                 
                 
-                visited_mask_g = torch.zeros(batch_size, current_g, 1, node_size, dtype=torch.bool, device=src.device)
-                visited_mask_g[:, torch.arange(current_g), :, g_start + torch.arange(current_g)] = True
-                visited_mask_g = visited_mask_g.reshape(batch_size * current_g, 1, node_size)
-                
-                # 인코딩 및 디코딩
-                memory = self.model.encode(src_g, src_fuzzy_g)
-                ys = tgt_g.clone()
-                
-                for i in range(self.cfg.node_size - 1):
-                    tgt_mask = subsequent_mask(ys.size(1)).type(torch.bool).to(src.device)
-                    out = self.model.decode(memory, src_fuzzy_g, ys, tgt_mask, i)
+                    src_g = src.unsqueeze(1).expand(-1, current_g, -1, -1).reshape(batch_size * current_g, *src.shape[1:])
+                    src_fuzzy_g = src_fuzzy.unsqueeze(1).expand(-1, current_g, -1, -1).reshape(batch_size * current_g, *src_fuzzy.shape[1:])
                     
+                 
+                    tgt_g = torch.arange(g_start, g_end, device=src.device, dtype=torch.long)
+                    tgt_g = tgt_g.unsqueeze(0).expand(batch_size, -1).reshape(-1, 1).contiguous()
+
+                    # visited_mask 초기화 - scatter_ 사용
+                    visited_mask_g = torch.zeros(batch_size * current_g, 1, node_size, 
+                                                dtype=torch.bool, device=src.device)
+                    batch_indices = torch.arange(batch_size * current_g, device=src.device)
+                    visited_mask_g[batch_indices, 0, tgt_g.squeeze()] = True
+
+                    # 인코딩
+                    memory = self.model.encode(src_g, src_fuzzy_g)
+               
+                    ys = tgt_g
+
+                    """
+                    # comparison_matrix 설정 - 불필요한 복사 방지
                     if self.cfg.comparison_matrix == "memory":
-                        comparison_matrix = self.model.memory
+                        comparison_matrix = memory
                     elif self.cfg.comparison_matrix == "encoder_lut":
                         comparison_matrix = self.model.encoder_lut
-                    elif self.cfg.comparison_matrix == "decoder_lut":
-                        comparison_matrix = self.model.decoder_lut
+                    """
+                    comparison_matrix=memory
+
+                    # ===== 첫 번째 스텝: Top-K 선택 =====
+                    mask_size = ys.size(1)
+                    if mask_size not in self._mask_cache:
+                        self._mask_cache[mask_size] = subsequent_mask(mask_size).type(torch.bool).to(src.device)
+                    tgt_mask = self._mask_cache[mask_size]
                     
+                    out = self.model.decode(memory, src_fuzzy_g, ys, tgt_mask, 0)
                     prob = self.model.generator(out[:, -1].unsqueeze(1), visited_mask_g, comparison_matrix)
-                    _, next_word = torch.max(prob, dim=-1)
-                    next_word = next_word.squeeze(-1)
                     
-                    visited_mask_g[torch.arange(batch_size * current_g), 0, next_word] = True
-                    ys = torch.cat([ys, next_word.unsqueeze(-1)], dim=1)
+                    # Top-K 선택
+                    topk_probs, topk_indices = torch.topk(prob.squeeze(1), k=K, dim=-1)
+                    #print(f"\n top k prob \t {topk_probs} \n \t \t {topk_indices}")
+                    #print("==================================")
                     
-                    # 중간 텐서 정리
-                    del out, prob
-                
-                # 거리 계산
-                predicted_distances = self.get_tour_distance(src_g, ys).reshape(batch_size, current_g)
-                
-                # 각 배치에서 최선의 투어 업데이트
-                for b in range(batch_size):
-                    min_idx = predicted_distances[b].argmin()
-                    if predicted_distances[b, min_idx] < best_predicted_distances[b]:
-                        best_predicted_distances[b] = predicted_distances[b, min_idx]
-                        best_tours[b] = ys.reshape(batch_size, current_g, node_size)[b, min_idx]
-                
-                # 메모리 정리
-                #del src_g, src_fuzzy_g, tgt_g, visited_mask_g, memory, ys, predicted_distances
-                #torch.cuda.empty_cache()
+               
+                    
+                    batch_size_g = batch_size * current_g
+                    
+                    # 원본 src와 src_fuzzy를 다시 확장 (뷰 사용)
+                    src_expanded = src.unsqueeze(1).unsqueeze(2).expand(-1, current_g, K, -1, -1)
+                    src_g = src_expanded.reshape(batch_size_g * K, *src.shape[1:])
+                    
+                    src_fuzzy_expanded = src_fuzzy.unsqueeze(1).unsqueeze(2).expand(-1, current_g, K, -1, -1)
+                    src_fuzzy_g = src_fuzzy_expanded.reshape(batch_size_g * K, *src_fuzzy.shape[1:])
+                    
+                    # memory와 comparison_matrix는 실제로 복사가 필요
+                    memory = memory.repeat_interleave(K, dim=0)
+                    visited_mask_g = visited_mask_g.repeat_interleave(K, dim=0)
+                    
+                  
+                    comparison_matrix=memory
+
+                    # ys 업데이트 - 새로운 텐서 생성 필요
+                    selected_nodes = topk_indices.reshape(-1, 1)
+                    first_nodes = tgt_g.repeat_interleave(K, dim=0)
+                    ys = torch.cat([first_nodes, selected_nodes], dim=1)
+                    
+                    # visited 업데이트
+                    batch_indices = torch.arange(batch_size_g * K, device=src.device)
+                    visited_mask_g[batch_indices, 0, selected_nodes.squeeze()] = True
+                    
+                    # 즉시 메모리 해제
+                    del out, prob, topk_probs, topk_indices, tgt_g, first_nodes
+                    
+                    # ===== 나머지 스텝: Greedy 디코딩 =====
+                    for i in range(1, node_size - 1):
+                        mask_size = ys.size(1)
+                        if mask_size not in self._mask_cache:
+                            self._mask_cache[mask_size] = subsequent_mask(mask_size).type(torch.bool).to(src.device)
+                        tgt_mask = self._mask_cache[mask_size]
+                        
+                        out = self.model.decode(memory, src_fuzzy_g, ys, tgt_mask, i)
+                        
+                        # out[:, -1:] 사용하여 불필요한 unsqueeze 제거
+                        prob = self.model.generator(out[:, -1:], visited_mask_g, comparison_matrix)
+                        
+                        # argmax와 업데이트
+                        next_word = prob.squeeze(1).argmax(dim=-1, keepdim=True)
+                        
+                        # In-place 업데이트
+                        visited_mask_g[batch_indices, 0, next_word.squeeze()] = True
+                        ys = torch.cat([ys, next_word], dim=1)
+                        
+                        del out, prob
+
+                    # ===== 거리 계산 최적화 =====
+                    predicted_distances = self.get_tour_distance(src_g, ys)
+                    predicted_distances = predicted_distances.reshape(batch_size, current_g * K)
+                    
+                    # 최적 투어 선택
+                    min_distances, min_indices = predicted_distances.min(dim=1)
+                    
+                    # 조건부 업데이트 - 필요한 경우만 처리
+                    update_mask = min_distances < best_predicted_distances
+                    if update_mask.any():
+                        # nonzero 대신 masked 연산 사용
+                        best_predicted_distances[update_mask] = min_distances[update_mask]
+                        
+                        # reshape은 뷰이므로 복사 없음
+                        tours_reshaped = ys.reshape(batch_size, current_g * K, node_size)
+                        
+                        # 간단한 인덱싱으로 선택
+                        for idx in update_mask.nonzero(as_tuple=True)[0]:
+                            best_tours[idx] = tours_reshaped[idx, min_indices[idx]]
+                    
+             
+
+        # 최종 결과 - src 직접 사용
+        predicted_tour_distance = self.get_tour_distance(src, best_tours)
+        #print(f"\n ys {best_tours}")
         
-        # 최종 결과 계산
-        predicted_tour_distance = self.get_tour_distance(src_original, best_tours)
-        
-        # 즉시 합계에 추가
+
+        # 통계 업데이트
         self.test_optimal_sum += optimal_tour_distance.sum().item()
         self.test_predicted_sum += predicted_tour_distance.sum().item()
         self.test_sample_count += batch_size
-        
+
         return {}
     
     def on_test_epoch_end(self):
